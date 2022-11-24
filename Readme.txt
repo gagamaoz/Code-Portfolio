@@ -10,4 +10,6 @@ PicEdit.py
 
 Python code for a picture editing program in Python that has features such as greyscale and changing of brightness
 
+Simulation.Rmd
 
+R code for simulating derivative pricing using simulation techniques in finance

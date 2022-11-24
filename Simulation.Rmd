@@ -1,0 +1,528 @@
+Read data from csv-files
+
+```{r}
+#install.packages('MASS')
+library(MASS)
+BRC <- read.csv('data.csv', header=TRUE)
+BRCprices<-as.matrix(BRC)
+
+# Dates for which we have underlying and derivative data
+Dates <-rev(as.Date(as.vector(BRCprices[,1]), "%m/%d/%y"))
+
+# Underlying and derivative prices
+BRCprices<-cbind(rev(as.numeric(as.vector(BRCprices[,2]))),
+                 rev(as.numeric(as.vector(BRCprices[,3]))),
+                 rev(as.numeric(as.vector(BRCprices[,4]))))
+Derprices <- rev(as.numeric(as.vector(BRC[, 5])))
+
+# Dates for which the option is active. We need stock path for all these
+Trade_d <- read.csv('days.csv', header=TRUE)
+Trade_days <- row.names(Trade_d)
+Trade_days <-as.Date(Trade_days, "%m-%d-%y")
+
+# Treasury bond yields
+Yields <- cbind(rev(as.numeric(as.vector(BRC[,7]))),
+                 rev(as.numeric(as.vector(BRC[,6]))),
+                 rev(as.numeric(as.vector(BRC[,8]))))/100
+```
+
+Function for simulating multiple stock paths using gbm
+
+```{r}
+# GBM Function, simulate three paths, one starting at S0 + h, one starting at s0 and one starting at S0 - h depending on which underlying asset to vary
+# This is to calculate greeks
+library(MASS)
+gbm.f<-function(s0,r,sigma,dt,m,underlying){ 
+  p=length(s0)
+  Sh=matrix(0,nrow=p,ncol=m+1)
+  S_h=matrix(0,nrow=p,ncol=m+1)
+  S=matrix(0,nrow=p,ncol=m+1)
+  Sh[,1]=s0
+  S_h[,1]=s0
+  S[,1]=s0
+  
+  # Vary initial price of the underlying asset we wish to study greeks for
+  h = 0.001*Sh[underlying,1] 
+  Sh[underlying,1] = Sh[underlying,1] + h
+  S_h[underlying,1] = S_h[underlying,1] - h
+  
+  # Important: simulate with same variables
+  Z<-mvrnorm(m, r*dt-diag(sigma)*dt/2,sigma*dt)
+  for(j in 2:(m+1)){
+    Sh[,j]=exp(log(Sh[,j-1])+Z[j-1,])
+    S_h[,j]=exp(log(S_h[,j-1])+Z[j-1,])
+    S[,j]=exp(log(S[,j-1])+Z[j-1,])
+  }
+   # Exclude S0
+  list("ph" = Sh[,2:(m+1)],"mh" = S_h[,2:(m+1)], "o" = S[,2:(m+1)])
+}
+```
+
+Key stock data
+
+```{r}
+barrier1 = 2493.018
+barrier2 = 6889.1295
+barrier3 =  2347.5540
+issue1 = 4532.76
+issue2 = 12525.6900
+issue3 = 4268.2800
+coupon_dates <- as.Date(c("26-04-22", "26-07-22", "26-10-22", "26-01-23", "26-04-23", "26-07-23", "26-10-23", "22-01-24"), "%d-%m-%y") 
+# Changed final to last trading day
+redemption_dates <- as.Date(c("26-01-23", "26-04-23", "26-07-23", "26-10-23", "22-01-24"), "%d-%m-%y")
+
+dt = 1/252
+```
+
+Payoff specification
+
+```{r}
+coupon_payment <- function(start_date, r) {
+  coupon = 3.25/4
+  # Discount factor
+  v <- exp(r/4)
+  discount_factors <- v ^ (7:0)
+  cash_flow <- c(rep(coupon, 8))
+  disc_cash_flows <- cash_flow * discount_factors
+  if (start_date <= coupon_dates[1]) {
+    cpo = sum(disc_cash_flows[1:8])
+  } else if (start_date <= coupon_dates[2]) {
+    cpo = sum(disc_cash_flows[2:8])
+  } else if (start_date <= coupon_dates[3]) {
+    cpo = sum(disc_cash_flows[3:8])
+  } else if (start_date <= coupon_dates[4]) {
+    cpo = sum(disc_cash_flows[4:8])
+  } else if (start_date <= coupon_dates[5]) {
+    cpo = sum(disc_cash_flows[5:8])
+  } else if (start_date <= coupon_dates[6]) {
+    cpo = sum(disc_cash_flows[6:8])
+  } else if (start_date <= coupon_dates[7]) {
+    cpo = sum(disc_cash_flows[7:8])
+  } else if (start_date <= coupon_dates[8]) {
+    cpo = disc_cash_flows[-1]
+  }
+  cpo
+}
+
+# Calculate pay-off at maturity of one path, given that we got in at a certain date
+payoff <- function(S1, S2, S3, r, date) {
+  min1 = min(S1)
+  min2 = min(S2)
+  min3 = min(S3)
+  close1 = tail(S1, 1)
+  close2 = tail(S2, 1)
+  close3 = tail(S3, 1)
+  if (close1 > issue1 & close2 > issue2 & close3 > issue3) {
+    den = 100
+  } else if (min1 < barrier1 | min2 < barrier2 | min3 < barrier3) {
+    ret <- c(close1/issue1, close2/issue2, close3/issue3)
+    den = min(ret)*100
+  } else if (min1 == 0 | min2 == 0 | min3 == 0) {
+    den = 0
+  } else {
+    den = 100
+  }
+  den + coupon_payment(date, r)
+}
+```
+
+Redemption cost specification
+
+```{r}
+redemption <- function() {
+  100 + 3.25/4
+}
+```
+
+
+Functions for simulating path until maturity given the historical data (typically one year back in time)
+Return full path during t = 0:T, which compromises historical data and simulated data
+Also contains three different paths with varying starting points for the simulated part in order to calculate greeks
+
+```{r}
+sim_path <- function(S_historical, dates, date, r, underlying) {
+  # dates = dates for historical data, date = current date
+  n0=nrow(S_historical)
+  Slogprices<-log(S_historical)
+  Slogreturns<-Slogprices[2:n0,]-Slogprices[1:(n0-1),]
+  sigma=cov(Slogreturns)/dt
+  
+  n = length(Dates)
+  sindeces<-(1:n)["2022-01-18"<Dates & Dates<=date]
+  # Number of historical dates
+  nhist = length(sindeces)
+  # Number of steps to simulate
+  m=length(Trade_days) - nhist
+  # Final historical date is starting point for simulation
+  s0=S_historical[n0,]
+  
+  S<-gbm.f(s0,r,sigma,dt,m,underlying)
+  # Extract path for different underlying assets and different starting points
+  s1h=S$ph[1,]
+  s2h=S$ph[2,]
+  s3h=S$ph[3,]
+  s1_h=S$mh[1,]
+  s2_h=S$mh[2,]
+  s3_h=S$mh[3,]
+  s1=S$o[1,]
+  s2=S$o[2,]
+  s3=S$o[3,]
+
+  # Put together historical data and future data
+  Hists1<-BRCprices[sindeces,1]
+  Hists2<-BRCprices[sindeces,2]
+  Hists3<-BRCprices[sindeces,3]
+  
+  wholes1h<-c(Hists1,s1h)
+  wholes2h<-c(Hists2,s2h)
+  wholes3h<-c(Hists3,s3h)
+  wholes1_h<-c(Hists1,s1_h)
+  wholes2_h<-c(Hists2,s2_h)
+  wholes3_h<-c(Hists3,s3_h)
+  wholes1<-c(Hists1,s1)
+  wholes2<-c(Hists2,s2)
+  wholes3<-c(Hists3,s3)
+  
+  list("s1h" = wholes1h,"s2h" = wholes2h, "s3h" = wholes3h, "s1mh" = wholes1_h,"s2mh" = wholes2_h, "s3mh" = wholes3_h, "s1" = wholes1,"s2" = wholes2, "s3" = wholes3)
+}
+
+# Simulate n paths using the historical data, return paths from t = 0:T divided by underlying asset and starting point of simulated part
+sim_n_path <- function(S_historical, dates, date, r, n_path, underlying) {
+  # dates = dates for historical data, date = current date
+  n = length(Dates)
+  sindeces<-(1:n)["2022-01-18"<Dates & Dates<=date]
+  nhist = length(sindeces)
+  m=length(Trade_days) - nhist # Amount of steps to simulate is total minus historical
+  S1h <- matrix(0, n_path, m + nhist)
+  S2h <- matrix(0, n_path, m + nhist)
+  S3h <- matrix(0, n_path, m + nhist)
+  S1_h <- matrix(0, n_path, m + nhist)
+  S2_h <- matrix(0, n_path, m + nhist)
+  S3_h <- matrix(0, n_path, m + nhist)
+  S1 <- matrix(0, n_path, m + nhist)
+  S2 <- matrix(0, n_path, m + nhist)
+  S3 <- matrix(0, n_path, m + nhist)
+  for(i in 1:n_path){
+    S = sim_path(S_historical, dates, date, r, underlying)
+    # Extract path for different underlying assets and different starting points
+    S1h[i,]= S$s1h
+    S2h[i,]= S$s2h
+    S3h[i,]= S$s3h
+    S1_h[i,]= S$s1mh
+    S2_h[i,]= S$s2mh
+    S3_h[i,]= S$s3mh
+    S1[i,]= S$s1
+    S2[i,]= S$s2
+    S3[i,]= S$s3
+  }
+  list("S1h" = S1h,"S2h" = S2h, "S3h" = S3h, "S1mh" = S1_h,"S2mh" = S2_h, "S3mh" = S3_h, "S1" = S1,"S2" = S2, "S3" = S3)
+}
+```
+
+Function for simulating the price, delta and gamma at specified date using n_path samples. Note: BEFORE FIRST REDEMPTION DATE
+
+```{r}
+sim_n <- function(S_historical, dates, date, r, n_path, underlying, EMS, CV) {
+  S = sim_n_path(S_historical, dates, date, r, n_path, underlying) # Simulate the paths
+  
+  # Extract based on starting points and asset
+  S1h = S$S1h; S2h = S$S2h; S3h = S$S3h
+  S1_h = S$S1mh; S2_h = S$S2mh; S3_h = S$S3mh
+  S1 = S$S1; S2 = S$S2; S3 = S$S3
+  
+  # Perform Empirical Martingale correction of all paths
+  if(EMS) {
+    dateind = which(Trade_days == date)
+    dateinds = dateind:length(Trade_days)
+    S1h[,dateinds] = EMS.f(S1h[,dateinds], r[2]); S2h[,dateinds] = EMS.f(S2h[,dateinds], r[2]); S3h[,dateinds] = EMS.f(S3h[,dateinds], r[2]);
+    S1[,dateinds] = EMS.f(S1[,dateinds], r[2]); S2[,dateinds] = EMS.f(S2[,dateinds], r[2]); S3[,dateinds] = EMS.f(S3[,dateinds], r[2]);
+    S1_h[,dateinds] = EMS.f(S1_h[,dateinds], r[2]); S2_h[,dateinds] = EMS.f(S2_h[,dateinds], r[2]); S3_h[,dateinds] = EMS.f(S3_h[,dateinds], r[2]);
+  }
+  
+  # Price option separately at current time for each starting point
+  terminal_vh <- terminal_value(S1h, S2h, S3h, r[2], date) # Value at maturity
+  terminal_v_h <- terminal_value(S1_h, S2_h, S3_h, r[2], date)
+  terminal_v <- terminal_value(S1, S2, S3, r[2], date)
+  Vh <- matrix(0, nrow = n_path, ncol = length(redemption_dates))
+  V_h <- matrix(0, nrow = n_path, ncol = length(redemption_dates))
+  V <- matrix(0, nrow = n_path, ncol = length(redemption_dates))
+  Vh[,length(redemption_dates)] = terminal_vh
+  V_h[,length(redemption_dates)] = terminal_v_h
+  V[,length(redemption_dates)] = terminal_v
+  
+  # For simplicity, we assume we are always ahead of the first redemption date (january 2023)
+  # At each redemption date, decide whether redemption happens or not for each path
+  for(j in ((length(redemption_dates)-1):1)) {
+    deltat = abs(as.numeric(difftime(redemption_dates[j+1],redemption_dates[j], units = "days"))/365) # Difference in years
+    
+    disc_vh = as.matrix(exp(-r[2]*deltat)*Vh[,j+1], ncol=1) # Discount previous values
+    disc_v_h = as.matrix(exp(-r[2]*deltat)*V_h[,j+1], ncol=1)
+    disc_v = as.matrix(exp(-r[2]*deltat)*V[,j+1], ncol=1)
+    
+    fh <- regress(S1h, S2h, S3h, redemption_dates[j], disc_vh, r[2]) # Model for calculating expected discounted payoff
+    f_h <- regress(S1_h, S2_h, S3_h, redemption_dates[j], disc_v_h, r[2])
+    f <- regress(S1, S2, S3, redemption_dates[j], disc_v, r[2])
+    
+    redcost <- redemption() # Cost of redemption
+    for(k in (1:n_path)) {
+      if(fh[k,1] <= redcost) {
+        Vh[k,j] <- disc_vh[k,1] # If value less than redemption cost, issuer does not redeem
+      } else {
+        Vh[k,j] <- redcost # If value greater than redemption cost, issuer redeems
+      }
+      if(f_h[k,1] <= redcost) {
+        V_h[k,j] <- disc_v_h[k,1] # If value less than redemption cost, issuer does not redeem
+      } else {
+        V_h[k,j] <- redcost # If value greater than redemption cost, issuer redeems
+      }
+      if(f[k,1] <= redcost) {
+        V[k,j] <- disc_v[k,1] # If value less than redemption cost, issuer does not redeem
+      } else {
+        V[k,j] <- redcost # If value greater than redemption cost, issuer redeems
+      }
+    }
+  }
+  
+  n0 = nrow(S_historical)
+  h = 0.001*S_historical[n0,underlying]
+  
+  # Finally, discount to current day from first redemption date
+  deltat = abs(as.numeric(difftime(redemption_dates[1], date, units = "days"))/365) # Difference in years
+  Vcurrh <- exp(-r[2]*deltat)*Vh[,1]
+  Vcurr_h <- exp(-r[2]*deltat)*V_h[,1]
+  Vcurr <- exp(-r[2]*deltat)*V[,1]
+  
+  # Use control variates variance reduction to estimate discounted payoff or simple sample mean
+  if(CV){
+    # Use minimum of final/issue as control variate
+    finalh <- matrix(0,n_path,3)
+    finalh[,1] = S1h[,ncol(S1h)]/issue1;finalh[,2] = S2h[,ncol(S2h)]/issue2;finalh[,3] = S3h[,ncol(S3h)]/issue3
+    CVsh <- as.vector(apply(finalh,1,min))
+    payh = CV.f(Vcurrh,CVsh)$est
+    
+    final <- matrix(0,n_path,3)
+    final[,1] = S1[,ncol(S1)]/issue1;final[,2] = S2[,ncol(S2)]/issue2;final[,3] = S3[,ncol(S3)]/issue3
+    CVs <- as.vector(apply(final,1,min))
+    p = CV.f(Vcurr,CVs)
+    std <- p$std
+    pay <- p$est
+    
+    final_h <- matrix(0,n_path,3)
+    final_h[,1] = S1_h[,ncol(S1_h)]/issue1;final_h[,2] = S2_h[,ncol(S2_h)]/issue2;final_h[,3] = S3_h[,ncol(S3_h)]/issue3
+    CVs_h <- as.vector(apply(final_h,1,min))
+    pay_h = CV.f(Vcurr_h,CVs_h)$est
+  } else {
+    payh <- mean(Vcurrh); pay_h <- mean(Vcurr_h); pay <- mean(Vcurr) # Calculate payoffs by sample mean 
+    std <- sd(Vcurr)
+  }
+  
+
+  # Greeks by finite difference method
+  delta = (payh - pay_h)/2*h
+  gamma = (payh - 2*pay + pay_h)/h^2
+  price = pay
+  # non-callable price
+  tau = abs(as.numeric(difftime(redemption_dates[5], date, units = "days"))/365) # Difference in years
+  non_call_p = exp(-r[2]*tau)*mean(terminal_v)
+  list("delta" = delta, "gamma" = gamma, "price" = price, "noncallp" = non_call_p, "std" = std)
+}
+```
+
+Helper functions for simulating price at specified date
+
+```{r}
+# Calculates payoff at maturity for all paths
+terminal_value <- function(S1, S2, S3, r, date) {
+  terminal_v <- matrix(0,ncol = 1, nrow = nrow(S1))
+  for(i in 1:nrow(S1)) {
+    terminal_v[i,1] <- payoff(S1[i,], S2[i,], S3[i,], r, date)
+  }
+  terminal_v
+}
+
+# Model for calculating expected discounted payoff
+regress <- function(S1, S2, S3, redemption_date, disc_v, r) {
+  # Get data for regression
+  prevdateinds <- 1:which(Trade_days == redemption_date)
+  S1reg <- S1[,prevdateinds]
+  S2reg <- S2[,prevdateinds]
+  S3reg <- S3[,prevdateinds]
+  # We use lowest fraction, as well as final prices as predictor variables
+  low1 <- apply(S1reg,1,min)/issue1; low2 <- apply(S2reg,1,min)/issue2; low3 <- apply(S3reg,1,min)/issue3
+  final1 <- S1reg[,ncol(S1reg)]; final2 <- S2reg[,ncol(S2reg)]; final3 <- S3reg[,ncol(S3reg)] 
+  mlr <- lm(disc_v ~ final1 + final2 + final3 + low1 + low2 + low3 + final1^2 + final2^2 + final3^2 + low1^2 + low2^2 + low3^2 + final1^3 + final2^3 + final3^3 + low1^3 + low2^3 + low3^3)
+  
+  prediction = predict(mlr)
+  tau <- abs(as.numeric(difftime(redemption_date, redemption_dates[5], units = "days"))/365)
+  pos_payoff <- exp(-r*tau)*(100 + coupon_payment(redemption_date,r))
+  
+  # Set predictions higher than the maximum possible payoff to the maximum possible payoff
+  for(i in (1:length(prediction))){
+    if(prediction[i]>pos_payoff){
+      prediction[i] = pos_payoff
+    }
+  }
+
+  as.matrix(prediction, ncol=1) # Return predicted values 
+}
+```
+
+Variance reduction functions
+
+```{r}
+EMS.f<-function(SimPaths,r){
+  Ns=nrow(SimPaths); nsteps=ncol(SimPaths)-1
+  Sstar=matrix(0,Ns,nsteps+1); W=matrix(0,Ns+1,nsteps)
+  Sstar[,1]=SimPaths[,1]
+  for(k in 2:(nsteps+1)){
+    W[1:Ns,k-1]=Sstar[,k-1]*SimPaths[,k]/SimPaths[,k-1]
+    W[Ns+1,k-1]=exp(-r*((k-1)*dt))*mean(W[1:Ns,k-1])
+    Sstar[,k]=SimPaths[,1]*W[1:Ns,k-1]/W[Ns+1,k-1]
+  }
+  Sstar
+}
+
+# Control variates variance reduction. Returns estimate using the samples and corresponding control variates
+CV.f<-function(Samples, CVs) {
+  # First, find parameters needed for variance reduction using a tenth of all samples
+  n_path = length(Samples)
+  n_regress = ceiling(n_path/10)
+  samples <- Samples[1:n_regress]
+  variates <- CVs[1:n_regress]
+  
+  mu = mean(variates)
+  c = - summary(lm(samples ~ variates))$coefficients[2]
+
+  # Simulate price using 9/10 of all samples and variance
+  sim_samples <- Samples[(n_regress+1):length(Samples)]
+  sim_variates <- CVs[(n_regress+1):length(Samples)]
+  est <- mean(sim_samples + c*(sim_variates - mu))
+  std <- sd(sim_samples + c*(sim_variates - mu))
+  list("est" = est, "std" = std)
+}
+```
+
+
+Perform rolling pricing and sensitivity analysis of the option starting from 2 of may 2022 and 80 days in the future
+
+```{r}
+Nsim=10000
+
+startingdate = "2022-05-02"
+n_days = 80
+
+n = length(Dates)-1
+trainind<-(1:n)["2021-11-02"<Dates & Dates<= startingdate]
+ntrain = length(trainind) 
+
+initial_ind = which(Trade_days == startingdate)
+price_days <- Trade_days[initial_ind:(initial_ind+n_days-1)]
+
+prices <- numeric(n_days)
+non_call_p <- numeric(n_days)
+delta1 <- numeric(n_days)
+delta2 <- numeric(n_days)
+delta3 <- numeric(n_days)
+gamma1 <- numeric(n_days)
+gamma2 <- numeric(n_days)
+gamma3 <- numeric(n_days)
+sample_std <- numeric(n_days)
+
+for(i in 1:n_days){
+  date = price_days[i] # Get current date
+  Yield = Yields[trainind[length(trainind)],]
+  r = as.vector(Yield)
+  print(r)
+
+  # Delta and gamma for asset 1
+  D1 = sim_n(BRCprices[trainind,], Dates[trainind], date, r, Nsim, 1, FALSE, FALSE) # First: EMS, second: CV
+  delta1[i] = D1$delta
+  gamma1[i] = D1$gamma
+  # Delta and gamma for asset 2
+  D2 = sim_n(BRCprices[trainind,], Dates[trainind], date, r, Nsim, 2, FALSE, FALSE)
+  delta2[i] = D2$delta
+  gamma2[i] = D2$gamma
+  # Delta and gamma for asset 3
+  D3 = sim_n(BRCprices[trainind,], Dates[trainind], date, r, Nsim, 3, FALSE, FALSE)
+  delta3[i] = D3$delta
+  gamma3[i] = D3$gamma
+  
+  # Use average to form price
+  prices[i] = (D1$price + D2$price + D3$price)/3
+  non_call_p[i] = (D1$noncallp + D2$noncallp + D3$noncallp)/3
+  
+  # Sample standard deviation of discounted payoffs
+  sample_std[i] = sqrt(D1$std^2 + D2$std^2 + D3$std^2)/3
+  
+  # Update fitting data one step forward
+  trainind=c(trainind[2:ntrain], trainind[ntrain]+1)
+  print(i)
+}
+```
+
+Visualize result of rolling simulation and calculate root mean square error
+
+```{r}
+dind1 = which(Dates == startingdate)
+dinds = dind1:(dind1+n_days-1)
+
+plot(prices~Dates[dinds], type="l" ,col="blue" , ylab="Price [%]" , xlab="", ylim=c(85,105))
+abline(h=seq(80,105,5) , col="grey", lwd=0.8)
+lines(Dates[dinds], Derprices[dinds], col="red")
+lines(Dates[dinds], non_call_p, col="black")
+legend(x = "topright",
+       col = c("blue", "red", "black"), lty = 1, lwd = 1,
+       legend = c('Simulated price', 'Actual Price', 'Simulated non-callable'))
+
+mindelta <- min(min(delta1),min(delta2),min(delta3))
+maxdelta <- max(max(delta1),max(delta2),max(delta3)) + 0.05
+plot(delta1~Dates[dinds],type="l", col="blue", ylim=c(mindelta,maxdelta), ylab="Delta", xlab="")
+abline(h=seq(mindelta,maxdelta, (maxdelta-mindelta)/5) , col="grey", lwd=0.8)
+lines(Dates[dinds], delta2, col="red")
+lines(Dates[dinds], delta3, col="black")
+legend(x = "topright",
+       col = c("blue", "red", "black"), lty = 1, lwd = 1,
+       legend = c('Delta 1', 'Delta 2', 'Delta 3'))
+
+mingamma <- min(min(gamma1),min(gamma2),min(gamma3))
+maxgamma <- max(max(gamma1),max(gamma2),max(gamma3)) + 0.0005
+plot(gamma1~Dates[dinds],type="l", col="blue", ylim=c(mingamma,maxgamma), ylab="Gamma", xlab="")
+abline(h=seq(mingamma,maxgamma, (maxgamma-mingamma)/5) , col="grey", lwd=0.8)
+lines(Dates[dinds], gamma2, col="red")
+lines(Dates[dinds], gamma3, col="black")
+legend(x = "topright",
+       col = c("blue", "red", "black"), lty = 1, lwd = 1,
+       legend = c('Gamma 1', 'Gamma 2', 'Gamma 3'))
+
+RMSE = sqrt(sum((Derprices[dinds]-prices)^2)/length(prices))
+
+cat("Root mean square error =", RMSE, "\n")
+cat("Sample standard deviation =", mean(sample_std), "\n")
+cat("Mean deltas:", mean(delta1), mean(delta2), mean(delta3), "\n")
+cat("Mean gammas:", mean(gamma1), mean(gamma2), mean(gamma3), "\n")
+```
+
+Test volatility assumptions
+
+```{r}
+
+n = length(Dates)-1
+d2021<-(1:n)["2021-01-01"<Dates & Dates<= "2021-12-31"]
+d2022<-(1:n)["2021-12-31"<Dates]
+
+S_historical1 <- BRCprices[d2021,]
+n0=nrow(S_historical1)
+Slogprices<-log(S_historical1)
+Slogreturns<-Slogprices[2:n0,]-Slogprices[1:(n0-1),]
+sigma1=cov(Slogreturns)/dt
+print(sqrt(sigma1))
+
+S_historical2 <- BRCprices[d2022,]
+n0=nrow(S_historical2)
+Slogprices<-log(S_historical2)
+Slogreturns<-Slogprices[2:n0,]-Slogprices[1:(n0-1),]
+Slogreturns<-Slogreturns[1:(n0-2),]
+sigma2=cov(Slogreturns)/dt
+print(sqrt(sigma2))
+```
+
