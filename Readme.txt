@@ -13,3 +13,7 @@ Python code for a picture editing program in Python that has features such as gr
 Simulation.Rmd
 
 R code for simulating derivative pricing using simulation techniques in finance
+
+HealthEcons.Rmd
+
+R code for investigating dentists' variables have on patients seen.
