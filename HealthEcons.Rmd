@@ -1,0 +1,449 @@
+```{r}
+# Set up
+library(dplyr)
+library(MASS)
+library(ggplot2)
+
+# Year 2021 to 2022
+workforce = read.csv('UKWorkforce.csv', head = T)
+ageyr21 = read.csv('Age_JulDec21.csv', head = T)
+ageyr22 = read.csv('Age_JanJun22.csv', head = T)
+age = rbind(ageyr21, ageyr22)
+```
+
+Hypothesis: How does doctor characteristics affect consumers' demand for dental healthcare across different age groups? 
+
+Doctor characteristics: 
+1. Gender (F/M)
+2. Age (Under 35, 35 to 44, 45 to 54, 55+)
+3. Contract Type (GDS, PDS, TDS, Mixed) ref: https://faq.nhsbsa.nhs.uk/knowledgebase/article/KA-01910/en-us
+- GDS: It's necessary to meet the reasonable needs of its patients. This would exclude services provided for cosmetic, rather than health reasons - circumstances under which a treatment is necessary.
+- PDS: Contracts are for specialist services such as sedation, domiciliary and generally have a time limit (they normally last for 5 years and are reviewed afterwards).
+- TDS: Whereby the Commissioner (Sustainability and Transformation Partnership / Local Health Board) make payments, not the NHS Dental Services and these are usually emergency dental practices.
+
+```{r}
+# Data Preparation:
+# workforce
+workforce = subset(workforce, Year == '2021-22')
+workforce = workforce[,-4]
+workforce = subset(workforce, Parent_Code_1 != 'ENG')
+workforce = workforce[,-1:-2]
+workforce = aggregate(cbind(Dentist_Count) ~ Parent_Code_1 + Contract_Type + Age_Group + Gender + Dentist_Type, data = workforce, FUN = sum)
+workforce = workforce[order(workforce$Parent_Code_1),]
+write.csv(workforce, file = 'workforce.csv') # Export as workforce.csv to clean in excel
+workforceT = read.csv('workforceT.csv', head = T)
+workforce = workforceT # Workforce transposed dataset
+workforce_density = read.csv('workforce_density.csv', head = T) # Workforce Density
+```
+
+workforceT.csv consists of number of dentists according to 
+1. Gender (F/M)
+2. Contract(GDS, PDS, TDS, MIXED)
+3. Age (Under_35, X35to44, X45to54, X55)
+4. Total number of dentists
+5. Dentist type (Associate or Provider)
+
+workforce_density.csv is the same as above but in terms of density
+
+Rationale for regressing using workforce density: 
+- To account for differences in dental sizes due to population differences in the regions 
+
+```{r}
+age = age[!is.na(age$POPULATION),]
+age = subset(age, GEOG_TYPE == 'SUB_ICB')
+age = age[,-2:-10]
+
+# Splitting of age into age bands
+age00 = subset(age, AGE_BAND == '0')
+age00 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age00, FUN = sum)
+age00$PATIENT_SEEN_DENSITY = age00$PATIENTS_SEEN / age00$POPULATION
+
+age01 = subset(age, AGE_BAND == '1')
+age01 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age01, FUN = sum)
+age01$PATIENT_SEEN_DENSITY = age01$PATIENTS_SEEN / age01$POPULATION
+
+age02 = subset(age, AGE_BAND == '2')
+age02 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age02, FUN = sum)
+age02$PATIENT_SEEN_DENSITY = age02$PATIENTS_SEEN / age02$POPULATION
+
+age03 = subset(age, AGE_BAND == '3')
+age03 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age03, FUN = sum)
+age03$PATIENT_SEEN_DENSITY = age03$PATIENTS_SEEN / age03$POPULATION
+
+age04 = subset(age, AGE_BAND == '4')
+age04 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age04, FUN = sum)
+age04$PATIENT_SEEN_DENSITY = age04$PATIENTS_SEEN / age04$POPULATION
+
+age05 = subset(age, AGE_BAND == '5')
+age05 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age05, FUN = sum)
+age05$PATIENT_SEEN_DENSITY = age05$PATIENTS_SEEN / age05$POPULATION
+
+age06 = subset(age, AGE_BAND == '6')
+age06 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age06, FUN = sum)
+age06$PATIENT_SEEN_DENSITY = age06$PATIENTS_SEEN / age06$POPULATION
+
+age07 = subset(age, AGE_BAND == '7')
+age07 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age07, FUN = sum)
+age07$PATIENT_SEEN_DENSITY = age07$PATIENTS_SEEN / age07$POPULATION
+
+age08 = subset(age, AGE_BAND == '8')
+age08 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age08, FUN = sum)
+age08$PATIENT_SEEN_DENSITY = age08$PATIENTS_SEEN / age08$POPULATION
+
+age09 = subset(age, AGE_BAND == '9')
+age09 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age09, FUN = sum)
+age09$PATIENT_SEEN_DENSITY = age09$PATIENTS_SEEN / age09$POPULATION
+
+age10 = subset(age, AGE_BAND == '10')
+age10 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age10, FUN = sum)
+age10$PATIENT_SEEN_DENSITY = age10$PATIENTS_SEEN / age10$POPULATION
+
+age11 = subset(age, AGE_BAND == '11')
+age11 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age11, FUN = sum)
+age11$PATIENT_SEEN_DENSITY = age11$PATIENTS_SEEN / age11$POPULATION
+
+age12 = subset(age, AGE_BAND == '12')
+age12 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age12, FUN = sum)
+age12$PATIENT_SEEN_DENSITY = age12$PATIENTS_SEEN / age12$POPULATION
+
+age13 = subset(age, AGE_BAND == '13')
+age13 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age13, FUN = sum)
+age13$PATIENT_SEEN_DENSITY = age13$PATIENTS_SEEN / age13$POPULATION
+
+age14 = subset(age, AGE_BAND == '14')
+age14 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age14, FUN = sum)
+age14$PATIENT_SEEN_DENSITY = age14$PATIENTS_SEEN / age14$POPULATION
+
+age15 = subset(age, AGE_BAND == '15')
+age15 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age15, FUN = sum)
+age15$PATIENT_SEEN_DENSITY = age15$PATIENTS_SEEN / age15$POPULATION
+
+age16 = subset(age, AGE_BAND == '16')
+age16 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age16, FUN = sum)
+age16$PATIENT_SEEN_DENSITY = age16$PATIENTS_SEEN / age16$POPULATION
+
+age17 = subset(age, AGE_BAND == '17')
+age17 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age17, FUN = sum)
+age17$PATIENT_SEEN_DENSITY = age17$PATIENTS_SEEN / age17$POPULATION
+
+age18to64 = subset(age, AGE_BAND == '18-64')
+age18to64 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age18to64, FUN = sum)
+age18to64$PATIENT_SEEN_DENSITY = age18to64$PATIENTS_SEEN / age18to64$POPULATION
+
+age65to74 = subset(age, AGE_BAND == '65-74')
+age65to74 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age65to74, FUN = sum)
+age65to74$PATIENT_SEEN_DENSITY = age65to74$PATIENTS_SEEN / age65to74$POPULATION
+
+age75to84 = subset(age, AGE_BAND == '75-84')
+age75to84 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age75to84, FUN = sum)
+age75to84$PATIENT_SEEN_DENSITY = age75to84$PATIENTS_SEEN / age75to84$POPULATION
+
+age85 = subset(age, AGE_BAND == '85+')
+age85 = aggregate(cbind(PATIENTS_SEEN, POPULATION) ~ PSEEN_END_DATE + REGION_CODE + REGION_ONS_CODE + REGION_NAME + PATIENT_TYPE + AGE_BAND, data = age85, FUN = sum)
+age85$PATIENT_SEEN_DENSITY = age85$PATIENTS_SEEN / age85$POPULATION
+
+```
+
+```{r}
+# Merging of datasets for modelling
+# Dataset merged with workforce density
+data00 = merge(age00, workforce_density, by=c('REGION_CODE')) # age00
+data01 = merge(age01, workforce_density, by=c('REGION_CODE')) # age01
+data02 = merge(age02, workforce_density, by=c('REGION_CODE')) # age02
+data03 = merge(age03, workforce_density, by=c('REGION_CODE')) # age03
+data04 = merge(age04, workforce_density, by=c('REGION_CODE')) # age04
+data05 = merge(age05, workforce_density, by=c('REGION_CODE')) # age05
+data06 = merge(age06, workforce_density, by=c('REGION_CODE')) # age06
+data07 = merge(age07, workforce_density, by=c('REGION_CODE')) # age07
+data08 = merge(age08, workforce_density, by=c('REGION_CODE')) # age08
+data09 = merge(age09, workforce_density, by=c('REGION_CODE')) # age09
+data10 = merge(age10, workforce_density, by=c('REGION_CODE')) # age10
+data11 = merge(age11, workforce_density, by=c('REGION_CODE')) # age11
+data12 = merge(age12, workforce_density, by=c('REGION_CODE')) # age12               
+data13 = merge(age13, workforce_density, by=c('REGION_CODE')) # age13
+data14 = merge(age14, workforce_density, by=c('REGION_CODE')) # age14
+data15 = merge(age15, workforce_density, by=c('REGION_CODE')) # age15
+data16 = merge(age16, workforce_density, by=c('REGION_CODE')) # age16
+data17 = merge(age17, workforce_density, by=c('REGION_CODE')) # age17
+data18 = merge(age18to64, workforce_density, by=c('REGION_CODE')) # age18to64
+data19 = merge(age65to74, workforce_density, by=c('REGION_CODE')) # age65to74
+data20 = merge(age75to84, workforce_density, by=c('REGION_CODE')) # age75to84
+data21 = merge(age85, workforce_density, by=c('REGION_CODE')) # age85
+
+# List of all datasets in one
+datasets <- list(data00, data01, data02, data03, data04, data05, data06, data07, data08, data09, data10, data11, data12, data13, data14, data15, data16, data17, data18, data19, data20, data21)
+```
+
+Datasets to work with:
+1. data00 to data21
+2. datasets 
+
+```{r}
+# Data exploration
+# Merging of datas into one
+all_data <- rbind(data00, data01, data02, data03, data04, data05, data06, data07, data08, data09, data10, data11, data12, data13, data14, data15, data16, data17, data18, data19, data20, data21)
+```
+
+```{r}
+# Data exploration
+# Correlation matrix 
+# Define the column indices to compute the correlation for
+col_indices <- 9:21
+
+# Loop over the datasets
+for (i in 1:length(datasets)) {
+  
+  # Get the subset of the dataset by index
+  dataset_subset <- datasets[[i]][, col_indices]
+  
+  # Compute the correlation matrix
+  cor_mat <- cor(dataset_subset)
+  
+  # Correlation coefficients plot
+  p <- ggplot() +
+    geom_text(data = reshape2::melt(cor_mat), aes(x = Var1, y = Var2, label = round(value, 2), color = abs(value) > 0.7 & !is.na(value)), size = 3) +
+    ggtitle(paste("Correlation matrix for dataset", i)) +
+    scale_color_manual(values = c("black", "red")) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1),
+          axis.text.y = element_text(angle = 0, hjust = 1),
+          plot.title = element_text(hjust = 0.5),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank())
+  
+  print(p)
+  
+  # Save plots - remove # in next line to save plots
+  # ggsave(paste0("cor_matrix_", i, ".png"), plot = p, width = 8, height = 6, dpi = 300)
+
+}
+
+```
+
+The results of the correlation matrix suggests that 
+1. F_DENTIST and M_DENTIST are in perfect negative correlation
+2. GDS and MIXED have a correlation coefficient of -0.7
+3. PDS and TDS have a correlation coefficient of -0.7
+4. TDS and Dentists aged under 35 have a correlation coefficient of 0.74. Although intuitively it does not make sense, removal of TDS due to reason 3 solves this issue.
+5. Dentists aged 35 to 44 and Dentists aged 55+ have a correlation coefficient of -0.96
+6. Dentists aged 35 to 44 and Dentists aged 45 to 54 have a correlation coefficient of 0.71
+7. Dentists aged 45 to 54 and Dentists aged 55+ have a correlation coefficient of -0.84
+8. Associate dentists and performing provider dentists are in perfect negative correlation.
+
+Hence, we remove M_DENTIST, TDS, MIXED, Dentists aged 35 to 44, Dentists aged 55+ and ASSOCIATE from our model.
+
+```{r}
+# Data exploration
+# Histogram of variables
+
+# Main Dependent Variable - PATIENT_SEEN_DENSITY
+ggplot(all_data, aes(x = PATIENT_SEEN_DENSITY)) +
+  geom_histogram(color = "black", fill = "white") +
+  labs(x = "Patient Seen Density", y = "Frequency") +
+  theme_classic()
+
+ggsave("PATIENT_SEEN_DENSITY_Histogram.png")
+
+```
+
+1. PATIENT_SEEN_DENSITY seems to be skewed with a larger left-tail. We might want to log the variable.
+2. Since the density of dentists of different gender, contract types, age and dentists' types are homogenous throughout the time period in each regions, it makes no sense to plot the explanatory variables in histograms.
+
+MODEL 1: log(PATIENT_SEEN_DENSITY) = F_DENTIST
+
+```{r}
+# Model 1: log(PATIENT_SEEN_DENSITY) = F_DENTIST
+
+# Function that performs the linear regression and returns the results
+perform_regression <- function(data) {
+  # Linear Regression
+  model <- lm(log(PATIENT_SEEN_DENSITY) ~ F_DENTIST, data=data)
+  # Return the summary of the model
+  return(summary(model))
+}
+
+summary_list <- list()
+
+# Loop through the list of datasets and perform linear regression on each one
+for (i in 1:length(datasets)) {
+  # Perform regression on the current dataset and obtain the summary statistics
+  summary <- perform_regression(datasets[[i]])
+  summary_list[[paste0("Data", i)]] <- summary
+}
+
+# Save the summary list to a file for clarity
+sink("summarystats_model1.txt")
+cat("Summary Statistics for Linear Regression Models:\n\n")
+cat("-------------------------------------------------\n\n")
+for (i in 1:length(summary_list)) {
+  # Print the dataset label
+  cat(paste0("Data", i, ":\n"))
+  # Print the summary of the model
+  print(summary_list[[paste0("Data", i)]])
+  # Add a blank line for separation
+  cat("\n")
+}
+
+sink()
+```
+
+MODEL 2: log(PATIENT_SEEN_DENSITY) = GDS + PDS
+
+```{r}
+# Model 2: log(PATIENT_SEEN_DENSITY) = GDS + PDS
+
+# Function that performs the linear regression and returns the results
+perform_regression <- function(data) {
+  # Linear Regression
+  model <- lm(log(PATIENT_SEEN_DENSITY) ~ GDS + PDS, data=data)
+  # Return the summary of the model
+  return(summary(model))
+}
+
+summary_list <- list()
+
+# Loop through the list of datasets and perform linear regression on each one
+for (i in 1:length(datasets)) {
+  # Perform regression on the current dataset and obtain the summary statistics
+  summary <- perform_regression(datasets[[i]])
+  summary_list[[paste0("Data", i)]] <- summary
+}
+
+# Save the summary list to a file for clarity
+sink("summarystats_model2.txt")
+cat("Summary Statistics for Linear Regression Models:\n\n")
+cat("-------------------------------------------------\n\n")
+for (i in 1:length(summary_list)) {
+  # Print the dataset label
+  cat(paste0("Data", i, ":\n"))
+  # Print the summary of the model
+  print(summary_list[[paste0("Data", i)]])
+  # Add a blank line for separation
+  cat("\n")
+}
+
+sink()
+```
+
+Results for MODEL 2 shows that GDS and PDS are generally statistically insignificant and may be considered to be removed from the final model.
+
+
+MODEL 3: log(PATIENT_SEEN_DENSITY) = Under_35 + X45to54
+
+```{r}
+# Model 3: log(PATIENT_SEEN_DENSITY) = Under_35 + X45to54
+
+# Function that performs the linear regression and returns the results
+perform_regression <- function(data) {
+  # Linear Regression
+  model <- lm(log(PATIENT_SEEN_DENSITY) ~ Under_35 + X45to54, data=data)
+  # Return the summary of the model
+  return(summary(model))
+}
+
+summary_list <- list()
+
+# Loop through the list of datasets and perform linear regression on each one
+for (i in 1:length(datasets)) {
+  # Perform regression on the current dataset and obtain the summary statistics
+  summary <- perform_regression(datasets[[i]])
+  summary_list[[paste0("Data", i)]] <- summary
+}
+
+# Save the summary list to a file for clarity
+sink("summarystats_model3.txt")
+cat("Summary Statistics for Linear Regression Models:\n\n")
+cat("-------------------------------------------------\n\n")
+for (i in 1:length(summary_list)) {
+  # Print the dataset label
+  cat(paste0("Data", i, ":\n"))
+  # Print the summary of the model
+  print(summary_list[[paste0("Data", i)]])
+  # Add a blank line for separation
+  cat("\n")
+}
+
+sink()
+```
+
+MODEL 4: log(PATIENT_SEEN_DENSITY) = PROVIDER 
+
+```{r}
+# Model 6: log(PATIENT_SEEN_DENSITY) = PROVIDER
+
+# Function that performs the linear regression and returns the results
+perform_regression <- function(data) {
+  # Linear Regression
+  model <- lm(log(PATIENT_SEEN_DENSITY) ~ PROVIDER, data=data)
+  # Return the summary of the model
+  return(summary(model))
+}
+
+summary_list <- list()
+
+# Loop through the list of datasets and perform linear regression on each one
+for (i in 1:length(datasets)) {
+  # Perform regression on the current dataset and obtain the summary statistics
+  summary <- perform_regression(datasets[[i]])
+  summary_list[[paste0("Data", i)]] <- summary
+}
+
+# Save the summary list to a file for clarity
+sink("summarystats_model4.txt")
+cat("Summary Statistics for Linear Regression Models:\n\n")
+cat("-------------------------------------------------\n\n")
+for (i in 1:length(summary_list)) {
+  # Print the dataset label
+  cat(paste0("Data", i, ":\n"))
+  # Print the summary of the model
+  print(summary_list[[paste0("Data", i)]])
+  # Add a blank line for separation
+  cat("\n")
+}
+
+sink()
+```
+
+Account for interaction effects between age and gender. Dentist type should be irrelevant of age and gender.
+
+FINAL MODEL: log(PATIENT_SEEN_DENSITY) = F_DENTIST + Under_35 + X45to54 + F_DENTIST*Under_35 + F_DENTIST*X45to54 + PROVIDER
+
+```{r}
+# FINAL MODEL: log(PATIENT_SEEN_DENSITY) = F_DENTIST+ Under_35 + X45to54 + F_DENTIST*Under_35 + F_DENTIST*X45to54
+
+# Function that performs the linear regression and returns the results
+perform_regression <- function(data) {
+  # Linear Regression
+  model <- lm(log(PATIENT_SEEN_DENSITY) ~ F_DENTIST + Under_35 + X45to54 + F_DENTIST*Under_35 + F_DENTIST*X45to54 + PROVIDER, data=data)
+  # Return the summary of the model
+  return(summary(model))
+}
+
+summary_list <- list()
+
+# Loop through the list of datasets and perform linear regression on each one
+for (i in 1:length(datasets)) {
+  # Perform regression on the current dataset and obtain the summary statistics
+  summary <- perform_regression(datasets[[i]])
+  summary_list[[paste0("Data", i)]] <- summary
+}
+
+# Save the summary list to a file for clarity
+sink("summarystats_finalmodel.txt")
+cat("Summary Statistics for Linear Regression Models:\n\n")
+cat("-------------------------------------------------\n\n")
+for (i in 1:length(summary_list)) {
+  # Print the dataset label
+  cat(paste0("Data", i, ":\n"))
+  # Print the summary of the model
+  print(summary_list[[paste0("Data", i)]])
+  # Add a blank line for separation
+  cat("\n")
+}
+
+sink()
+```
+
+Age bands with significant results:
+Age 0, 1, 2 and 18-64
+Corresponding datasets: 
+data00, data01, data02, data18
